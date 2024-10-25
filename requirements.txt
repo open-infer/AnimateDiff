@@ -8,6 +8,10 @@ imageio-ffmpeg==0.4.9
 decord==0.6.0
 omegaconf==2.3.0
 gradio==3.36.1
+huggingface_hub==0.24.7
 safetensors
 einops
 wandb
+onnx
+onnxscript
+onnxruntime

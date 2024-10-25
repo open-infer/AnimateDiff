@@ -1,17 +1,11 @@
 # Adapted from https://github.com/showlab/Tune-A-Video/blob/main/tuneavideo/pipelines/pipeline_tuneavideo.py
 
 import inspect
-from typing import Callable, List, Optional, Union
 from dataclasses import dataclass
+from typing import Callable, List, Optional, Union
 
 import numpy as np
 import torch
-from tqdm import tqdm
-
-from diffusers.utils import is_accelerate_available
-from packaging import version
-from transformers import CLIPTextModel, CLIPTokenizer
-
 from diffusers.configuration_utils import FrozenDict
 from diffusers.models import AutoencoderKL
 from diffusers.pipeline_utils import DiffusionPipeline
@@ -24,12 +18,15 @@ from diffusers.schedulers import (
     PNDMScheduler,
 )
 from diffusers.utils import deprecate, logging, BaseOutput
-
+from diffusers.utils import is_accelerate_available
 from einops import rearrange
+from packaging import version
+from torch.onnx import dynamo_export
+from tqdm import tqdm
+from transformers import CLIPTextModel, CLIPTokenizer
 
-from ..models.unet import UNet3DConditionModel
-from ..models.sparse_controlnet import SparseControlNetModel
-import pdb
+from animatediff.models.sparse_controlnet import SparseControlNetModel
+from animatediff.models.unet import UNet3DConditionModel
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -56,9 +53,16 @@ class AnimationPipeline(DiffusionPipeline):
             EulerAncestralDiscreteScheduler,
             DPMSolverMultistepScheduler,
         ],
-        controlnet: Union[SparseControlNetModel, None] = None,
+        controlnet: SparseControlNetModel | None = None,
     ):
         super().__init__()
+
+        self.vae = vae
+        self.text_encoder = text_encoder
+        self.tokenizer = tokenizer
+        self.unet = unet
+        self.scheduler = scheduler
+        self.controlnet = controlnet
 
         if hasattr(scheduler.config, "steps_offset") and scheduler.config.steps_offset != 1:
             deprecation_message = (
@@ -401,7 +405,7 @@ class AnimationPipeline(DiffusionPipeline):
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
                 down_block_additional_residuals = mid_block_additional_residual = None
-                if (getattr(self, "controlnet", None) != None) and (controlnet_images != None):
+                if (getattr(self, "controlnet", None) is not None) and (controlnet_images is not None):
                     assert controlnet_images.dim() == 5
 
                     controlnet_noisy_latents = latent_model_input
@@ -431,11 +435,21 @@ class AnimationPipeline(DiffusionPipeline):
                     )
 
                 # predict the noise residual
-                noise_pred = self.unet(
-                    latent_model_input, t, 
+                dynamo_export(
+                    self.unet,
+                    sample=latent_model_input,
+                    timestep=t,
                     encoder_hidden_states=text_embeddings,
-                    down_block_additional_residuals = down_block_additional_residuals,
-                    mid_block_additional_residual   = mid_block_additional_residual,
+                    down_block_additional_residuals=down_block_additional_residuals,
+                    mid_block_additional_residual=mid_block_additional_residual
+                ).save("unet.onnx")
+
+                noise_pred = self.unet(
+                    sample=latent_model_input,
+                    timestep=t,
+                    encoder_hidden_states=text_embeddings,
+                    down_block_additional_residuals=down_block_additional_residuals,
+                    mid_block_additional_residual=mid_block_additional_residual,
                 ).sample.to(dtype=latents_dtype)
 
                 # perform guidance

@@ -2,30 +2,23 @@ import argparse
 import datetime
 import inspect
 import os
-from omegaconf import OmegaConf
+from pathlib import Path
 
+import numpy as np
 import torch
 import torchvision.transforms as transforms
-
-import diffusers
+from PIL import Image
 from diffusers import AutoencoderKL, DDIMScheduler
-
-from tqdm.auto import tqdm
+from diffusers.utils.import_utils import is_xformers_available
+from einops import rearrange
+from omegaconf import OmegaConf
 from transformers import CLIPTextModel, CLIPTokenizer
 
-from animatediff.models.unet import UNet3DConditionModel
 from animatediff.models.sparse_controlnet import SparseControlNetModel
+from animatediff.models.unet import UNet3DConditionModel
 from animatediff.pipelines.pipeline_animation import AnimationPipeline
-from animatediff.utils.util import save_videos_grid
 from animatediff.utils.util import load_weights, auto_download
-from diffusers.utils.import_utils import is_xformers_available
-
-from einops import rearrange, repeat
-
-import csv, pdb, glob, math
-from pathlib import Path
-from PIL import Image
-import numpy as np
+from animatediff.utils.util import save_videos_grid
 
 
 @torch.no_grad()
@@ -119,7 +112,10 @@ def main(args):
             if controlnet is not None: controlnet.enable_xformers_memory_efficient_attention()
 
         pipeline = AnimationPipeline(
-            vae=vae, text_encoder=text_encoder, tokenizer=tokenizer, unet=unet,
+            vae=vae,
+            text_encoder=text_encoder,
+            tokenizer=tokenizer,
+            unet=unet,
             controlnet=controlnet,
             scheduler=DDIMScheduler(**OmegaConf.to_container(inference_config.noise_scheduler_kwargs)),
         ).to("cuda")
@@ -163,7 +159,6 @@ def main(args):
                 width               = model_config.W,
                 height              = model_config.H,
                 video_length        = model_config.L,
-
                 controlnet_images = controlnet_images,
                 controlnet_image_index = model_config.get("controlnet_image_indexs", [0]),
             ).videos
